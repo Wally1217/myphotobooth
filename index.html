@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>橘子巨嬰人生四格</title>
+    <style>
+        :root { --frame-width: 800px; --frame-height: 600px; }
+        body { font-family: 'PingFang TC', 'Microsoft JhengHei', sans-serif; display: flex; flex-direction: column; align-items: center; background: #1a1a1a; color: white; margin: 0; padding: 20px; }
+        
+        h1 { margin-bottom: 10px; color: #00D1B2; }
+
+        /* 預覽容器 */
+        .preview-container { 
+            position: relative; 
+            width: 95vw; 
+            max-width: var(--frame-width);
+            aspect-ratio: 4 / 3;
+            background: #000;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+        }
+
+        video, #preview-canvas { 
+            position: absolute; 
+            top: 0; left: 0; 
+            width: 100%; height: 100%; 
+            object-fit: cover; 
+        }
+
+        /* 倒數計時 */
+        #countdown-text {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 150px;
+            font-weight: 900;
+            color: #00D1B2;
+            text-shadow: 0 0 30px rgba(0,0,0,0.8);
+            z-index: 100;
+            display: none;
+            pointer-events: none;
+        }
+
+        /* 閃光燈特效 */
+        #flash {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: white;
+            z-index: 150;
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .controls { margin-top: 30px; }
+        button { 
+            padding: 15px 50px; font-size: 1.2rem; cursor: pointer; 
+            border-radius: 50px; border: none; background: #00D1B2; color: white;
+            transition: 0.3s; font-weight: bold; box-shadow: 0 4px 15px rgba(0,209,178,0.3);
+        }
+        button:hover { transform: scale(1.05); background: #00b89c; }
+        button:disabled { background: #555; cursor: not-allowed; box-shadow: none; }
+
+        #result-container { margin-top: 40px; display: none; text-align: center; padding-bottom: 50px; }
+        #final-canvas { 
+            max-width: 320px; /* 模擬手機查看時的窄長感 */
+            height: auto;
+            border: none; /* 去除邊框達成無縫感 */
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+        .download-hint { margin-top: 15px; color: #aaa; font-size: 0.9rem; }
+    </style>
+</head>
+<body>
+
+    <h1>🍊 橘子巨嬰人生四格 🍊</h1>
+    
+    <div class="preview-container">
+        <video id="video" autoplay playsinline></video>
+        <canvas id="preview-canvas" width="800" height="600"></canvas>
+        <div id="countdown-text">3</div>
+        <div id="flash"></div>
+    </div>
+
+    <div class="controls">
+        <button id="start-btn">開始自動連拍</button>
+        <button id="reset-btn" style="background:#444; display:none; margin-left:10px;">重新拍攝</button>
+    </div>
+
+    <div id="result-container">
+        <canvas id="final-canvas"></canvas>
+        <p class="download-hint">✨ 長按圖片或右鍵即可儲存成品 ✨</p>
+    </div>
+
+    <script>
+        const video = document.getElementById('video');
+        const previewCanvas = document.getElementById('preview-canvas');
+        const ctx = previewCanvas.getContext('2d');
+        const countdownEl = document.getElementById('countdown-text');
+        const flashEl = document.getElementById('flash');
+        const startBtn = document.getElementById('start-btn');
+        const finalCanvas = document.getElementById('final-canvas');
+        
+        let currentStep = 1;
+        const capturedImages = [];
+        const frames = [];
+        const frameSrcs = ['frame1.png', 'frame2.png', 'frame3.png', 'frame4.png'];
+
+        // 預載入圖框
+        frameSrcs.forEach(src => {
+            const img = new Image();
+            img.src = src;
+            frames.push(img);
+        });
+
+        // 初始化鏡頭
+        navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 960 } })
+            .then(stream => { video.srcObject = stream; })
+            .catch(err => {
+                console.error(err);
+                alert("無法存取相機，請確認權限設定。");
+            });
+
+        // 即時繪製預覽（包含鏡像與圖框）
+        function drawPreview() {
+            ctx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+            
+            ctx.save();
+            ctx.scale(-1, 1); // 水平翻轉
+            ctx.drawImage(video, -previewCanvas.width, 0, previewCanvas.width, previewCanvas.height);
+            ctx.restore();
+            
+            // 繪製當前步驟的圖框
+            let frameIdx = Math.min(currentStep - 1, 3);
+            if (frames[frameIdx] && frames[frameIdx].complete) {
+                ctx.drawImage(frames[frameIdx], 0, 0, previewCanvas.width, previewCanvas.height);
+            }
+            requestAnimationFrame(drawPreview);
+        }
+        video.onloadedmetadata = () => drawPreview();
+
+        // 閃光燈動畫效果
+        function triggerFlash() {
+            flashEl.style.opacity = '1';
+            setTimeout(() => {
+                flashEl.style.transition = 'opacity 0.5s';
+                flashEl.style.opacity = '0';
+                setTimeout(() => { flashEl.style.transition = 'none'; }, 500);
+            }, 50);
+        }
+
+        // 自動拍攝排程
+        startBtn.onclick = async () => {
+            startBtn.disabled = true;
+            capturedImages.length = 0; // 清空舊圖
+
+            for (let i = 1; i <= 4; i++) {
+                currentStep = i;
+                await runCountdown(3); // 倒數 3 秒
+                triggerFlash();
+                capturePhoto();
+            }
+            
+            generateFinalStrip();
+        };
+
+        function runCountdown(seconds) {
+            return new Promise(resolve => {
+                let count = seconds;
+                countdownEl.style.display = 'block';
+                countdownEl.innerText = count;
+                
+                const timer = setInterval(() => {
+                    count--;
+                    if (count > 0) {
+                        countdownEl.innerText = count;
+                    } else {
+                        clearInterval(timer);
+                        countdownEl.style.display = 'none';
+                        resolve();
+                    }
+                }, 1000);
+            });
+        }
+
+        function capturePhoto() {
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = 800;
+            tempCanvas.height = 600;
+            const tCtx = tempCanvas.getContext('2d');
+            // 將當前 previewCanvas 的快照存起來
+            tCtx.drawImage(previewCanvas, 0, 0);
+            capturedImages.push(tempCanvas);
+        }
+
+        function generateFinalStrip() {
+            const fCtx = finalCanvas.getContext('2d');
+            const imgW = 800;
+            const imgH = 600;
+
+            // 無縫拼接：總寬度 800，總高度 600 * 4
+            finalCanvas.width = imgW;
+            finalCanvas.height = imgH * 4;
+
+            capturedImages.forEach((img, index) => {
+                // 座標 (0, 0), (0, 600), (0, 1200), (0, 1800)
+                fCtx.drawImage(img, 0, index * imgH, imgW, imgH);
+            });
+
+            // 顯示結果介面
+            document.getElementById('result-container').style.display = 'block';
+            document.getElementById('reset-btn').style.display = 'inline-block';
+            startBtn.style.display = 'none';
+            
+            // 畫面自動捲動到底部看結果
+            window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+        }
+
+        document.getElementById('reset-btn').onclick = () => location.reload();
+    </script>
+</body>
+</html>
