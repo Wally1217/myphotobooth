@@ -2,42 +2,38 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>橘子巨嬰人生四格</title>
     <style>
+        :root { --frame-width: 800px; --frame-height: 600px; }
         body { 
             font-family: 'PingFang TC', 'Microsoft JhengHei', sans-serif; 
             display: flex; flex-direction: column; align-items: center; 
             background: #1a1a1a; color: white; margin: 0; padding: 20px; 
+            overflow-x: hidden;
         }
         
-        h1 { margin-bottom: 10px; color: #00D1B2; }
+        h1 { margin-bottom: 10px; color: #00D1B2; text-align: center; }
 
-        /* 預覽容器：不再寫死比例，由內部 canvas 決定 */
+        /* 預覽容器：維持 4:3 比例 */
         .preview-container { 
             position: relative; 
-            width: 95vw; 
-            max-width: 800px;
+            width: 100%; 
+            max-width: 500px; /* 手機顯示寬度 */
+            aspect-ratio: 4 / 3;
             background: #000;
             border-radius: 12px;
             overflow: hidden;
             box-shadow: 0 20px 50px rgba(0,0,0,0.5);
-            line-height: 0;
         }
 
-        /* 隱藏原始視訊，只作為數據源 */
-        #video { 
-            position: absolute; width: 1px; height: 1px; opacity: 0; 
-        }
-
-        /* 這是我們真正看到的預覽畫面 */
+        /* 隱藏原始 video，改用 canvas 顯示即時畫面 */
+        video { display: none; }
         #preview-canvas { 
-            width: 100%; 
-            height: auto; 
-            display: block;
+            width: 100%; height: 100%; 
+            object-fit: cover; 
         }
 
-        /* 倒數計時 */
         #countdown-text {
             position: absolute;
             top: 50%; left: 50%;
@@ -48,10 +44,8 @@
             text-shadow: 0 0 30px rgba(0,0,0,0.8);
             z-index: 100;
             display: none;
-            pointer-events: none;
         }
 
-        /* 閃光燈特效 */
         #flash {
             position: absolute;
             top: 0; left: 0; width: 100%; height: 100%;
@@ -61,20 +55,19 @@
             pointer-events: none;
         }
 
-        .controls { margin-top: 30px; }
+        .controls { margin-top: 30px; text-align: center; }
         button { 
-            padding: 15px 50px; font-size: 1.2rem; cursor: pointer; 
+            padding: 15px 40px; font-size: 1.1rem; cursor: pointer; 
             border-radius: 50px; border: none; background: #00D1B2; color: white;
             transition: 0.3s; font-weight: bold; box-shadow: 0 4px 15px rgba(0,209,178,0.3);
         }
-        button:hover { transform: scale(1.05); background: #00b89c; }
-        button:disabled { background: #555; cursor: not-allowed; box-shadow: none; }
+        button:hover { transform: scale(1.05); }
+        button:disabled { background: #555; cursor: not-allowed; box-shadow: none; opacity: 0.7; }
 
         #result-container { margin-top: 40px; display: none; text-align: center; padding-bottom: 50px; }
         #final-canvas { 
-            max-width: 320px; 
+            max-width: 300px; /* 呈現拍貼機長條感 */
             height: auto;
-            border: none;
             box-shadow: 0 10px 30px rgba(0,0,0,0.5);
         }
         .download-hint { margin-top: 15px; color: #aaa; font-size: 0.9rem; }
@@ -86,14 +79,14 @@
     
     <div class="preview-container">
         <video id="video" autoplay playsinline></video>
-        <canvas id="preview-canvas"></canvas>
+        <canvas id="preview-canvas" width="800" height="600"></canvas>
         <div id="countdown-text">3</div>
         <div id="flash"></div>
     </div>
 
     <div class="controls">
-        <button id="start-btn">開始自動連拍</button>
-        <button id="reset-btn" style="background:#444; display:none; margin-left:10px;">重新拍攝</button>
+        <button id="start-btn" disabled>資源載入中...</button>
+        <button id="reset-btn" style="background:#444; display:none; margin-top:10px;">重新拍攝</button>
     </div>
 
     <div id="result-container">
@@ -115,14 +108,25 @@
         const frames = [];
         const frameSrcs = ['frame1.png', 'frame2.png', 'frame3.png', 'frame4.png'];
 
-        // 預載入圖框
-        frameSrcs.forEach(src => {
+        // 1. 預載入圖框並監測狀態
+        let loadedFrames = 0;
+        frameSrcs.forEach((src, index) => {
             const img = new Image();
+            img.onload = () => {
+                loadedFrames++;
+                if (loadedFrames === 4) {
+                    startBtn.disabled = false;
+                    startBtn.innerText = "開始自動連拍";
+                }
+            };
+            img.onerror = () => {
+                console.error(`無法載入圖框: ${src}`);
+            };
             img.src = src;
-            frames.push(img);
+            frames[index] = img;
         });
 
-        // 初始化鏡頭
+        // 2. 初始化鏡頭 (請求較高解析度以供裁切)
         navigator.mediaDevices.getUserMedia({ 
             video: { 
                 width: { ideal: 1280 }, 
@@ -130,53 +134,76 @@
                 facingMode: "user" 
             } 
         })
-        .then(stream => { 
-            video.srcObject = stream;
-            // 當鏡頭數據載入後，根據實際比例調整畫布大小
-            video.onloadedmetadata = () => {
-                const videoW = video.videoWidth;
-                const videoH = video.videoHeight;
-                const ratio = videoW / videoH;
-                
-                // 以 800 為基準寬度，動態計算高度
-                previewCanvas.width = 800;
-                previewCanvas.height = 800 / ratio;
-                
-                drawPreview();
-            };
-        })
+        .then(stream => { video.srcObject = stream; })
         .catch(err => {
-            console.error(err);
-            alert("無法存取相機，請確認權限設定。");
+            alert("無法存取相機，請確保已開啟權限並使用 HTTPS 連線。");
         });
 
-        // 即時繪製預覽（包含鏡像與圖框）
-        function drawPreview() {
-            ctx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
-            
-            // 畫底層鏡像人臉
-            ctx.save();
-            ctx.scale(-1, 1);
-            ctx.drawImage(video, -previewCanvas.width, 0, previewCanvas.width, previewCanvas.height);
-            ctx.restore();
-            
-            // 畫上層當前圖框
-            let frameIdx = Math.min(currentStep - 1, 3);
-            if (frames[frameIdx] && frames[frameIdx].complete) {
-                ctx.drawImage(frames[frameIdx], 0, 0, previewCanvas.width, previewCanvas.height);
+        // 3. 通用繪製邏輯：負責把 video 漂亮地畫進 800x600 的 canvas
+        function drawVideoToCanvas(targetCtx, withFrame = true) {
+            const targetW = 800;
+            const targetH = 600;
+
+            // 清除畫布
+            targetCtx.clearRect(0, 0, targetW, targetH);
+
+            // 計算裁切：使其填滿 4:3 區域 (Crop to Fill)
+            const vW = video.videoWidth;
+            const vH = video.videoHeight;
+            if (!vW || !vH) return;
+
+            const targetAspect = targetW / targetH;
+            const videoAspect = vW / vH;
+            let sx, sy, sWidth, sHeight;
+
+            if (videoAspect > targetAspect) {
+                sHeight = vH;
+                sWidth = vH * targetAspect;
+                sx = (vW - sWidth) / 2;
+                sy = 0;
+            } else {
+                sWidth = vW;
+                sHeight = vW / targetAspect;
+                sx = 0;
+                sy = (vH - sHeight) / 2;
             }
-            requestAnimationFrame(drawPreview);
+
+            // 繪製人像：鏡像處理
+            targetCtx.save();
+            targetCtx.translate(targetW, 0);
+            targetCtx.scale(-1, 1);
+            targetCtx.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, targetW, targetH);
+            targetCtx.restore();
+
+            // 繪製圖框：不鏡像處理
+            if (withFrame) {
+                let frameIdx = Math.min(currentStep - 1, 3);
+                if (frames[frameIdx] && frames[frameIdx].complete) {
+                    targetCtx.drawImage(frames[frameIdx], 0, 0, targetW, targetH);
+                }
+            }
         }
 
-        function triggerFlash() {
-            flashEl.style.opacity = '1';
-            setTimeout(() => {
-                flashEl.style.transition = 'opacity 0.5s';
-                flashEl.style.opacity = '0';
-                setTimeout(() => { flashEl.style.transition = 'none'; }, 500);
-            }, 50);
+        // 即時預覽迴圈
+        function updatePreview() {
+            drawVideoToCanvas(ctx, true);
+            requestAnimationFrame(updatePreview);
+        }
+        video.onloadedmetadata = () => updatePreview();
+
+        // 4. 拍照邏輯
+        function capturePhoto() {
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = 800;
+            tempCanvas.height = 600;
+            const tCtx = tempCanvas.getContext('2d');
+            
+            // 抓取當前瞬間
+            drawVideoToCanvas(tCtx, true);
+            capturedImages.push(tempCanvas);
         }
 
+        // 5. 自動流程
         startBtn.onclick = async () => {
             startBtn.disabled = true;
             capturedImages.length = 0;
@@ -198,38 +225,42 @@
                 countdownEl.innerText = count;
                 const timer = setInterval(() => {
                     count--;
-                    if (count > 0) countdownEl.innerText = count;
-                    else { clearInterval(timer); countdownEl.style.display = 'none'; resolve(); }
+                    if (count > 0) {
+                        countdownEl.innerText = count;
+                    } else {
+                        clearInterval(timer);
+                        countdownEl.style.display = 'none';
+                        resolve();
+                    }
                 }, 1000);
             });
         }
 
-        function capturePhoto() {
-            const tempCanvas = document.createElement('canvas');
-            // 存檔尺寸必須跟當時的預覽尺寸一致
-            tempCanvas.width = previewCanvas.width;
-            tempCanvas.height = previewCanvas.height;
-            const tCtx = tempCanvas.getContext('2d');
-            tCtx.drawImage(previewCanvas, 0, 0);
-            capturedImages.push(tempCanvas);
+        function triggerFlash() {
+            flashEl.style.transition = 'none';
+            flashEl.style.opacity = '1';
+            setTimeout(() => {
+                flashEl.style.transition = 'opacity 0.6s';
+                flashEl.style.opacity = '0';
+            }, 50);
         }
 
         function generateFinalStrip() {
             const fCtx = finalCanvas.getContext('2d');
-            const imgW = previewCanvas.width;
-            const imgH = previewCanvas.height;
+            const imgW = 800;
+            const imgH = 600;
 
-            // 無縫拼接：寬度與單張相同，高度為單張高度 * 4
             finalCanvas.width = imgW;
             finalCanvas.height = imgH * 4;
 
-            capturedImages.forEach((img, index) => {
-                fCtx.drawImage(img, 0, index * imgH, imgW, imgH);
+            capturedImages.forEach((canvas, index) => {
+                fCtx.drawImage(canvas, 0, index * imgH, imgW, imgH);
             });
 
             document.getElementById('result-container').style.display = 'block';
             document.getElementById('reset-btn').style.display = 'inline-block';
             startBtn.style.display = 'none';
+            
             window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
         }
 
