@@ -5,28 +5,36 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>橘子巨嬰人生四格</title>
     <style>
-        :root { --frame-width: 800px; --frame-height: 600px; }
-        body { font-family: 'PingFang TC', 'Microsoft JhengHei', sans-serif; display: flex; flex-direction: column; align-items: center; background: #1a1a1a; color: white; margin: 0; padding: 20px; }
+        body { 
+            font-family: 'PingFang TC', 'Microsoft JhengHei', sans-serif; 
+            display: flex; flex-direction: column; align-items: center; 
+            background: #1a1a1a; color: white; margin: 0; padding: 20px; 
+        }
         
         h1 { margin-bottom: 10px; color: #00D1B2; }
 
-        /* 預覽容器 */
+        /* 預覽容器：不再寫死比例，由內部 canvas 決定 */
         .preview-container { 
             position: relative; 
             width: 95vw; 
-            max-width: var(--frame-width);
-            aspect-ratio: 4 / 3;
+            max-width: 800px;
             background: #000;
-            border-radius: 8px;
+            border-radius: 12px;
             overflow: hidden;
             box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+            line-height: 0;
         }
 
-        video, #preview-canvas { 
-            position: absolute; 
-            top: 0; left: 0; 
-            width: 100%; height: 100%; 
-            object-fit: cover; 
+        /* 隱藏原始視訊，只作為數據源 */
+        #video { 
+            position: absolute; width: 1px; height: 1px; opacity: 0; 
+        }
+
+        /* 這是我們真正看到的預覽畫面 */
+        #preview-canvas { 
+            width: 100%; 
+            height: auto; 
+            display: block;
         }
 
         /* 倒數計時 */
@@ -34,7 +42,7 @@
             position: absolute;
             top: 50%; left: 50%;
             transform: translate(-50%, -50%);
-            font-size: 150px;
+            font-size: 120px;
             font-weight: 900;
             color: #00D1B2;
             text-shadow: 0 0 30px rgba(0,0,0,0.8);
@@ -64,9 +72,9 @@
 
         #result-container { margin-top: 40px; display: none; text-align: center; padding-bottom: 50px; }
         #final-canvas { 
-            max-width: 320px; /* 模擬手機查看時的窄長感 */
+            max-width: 320px; 
             height: auto;
-            border: none; /* 去除邊框達成無縫感 */
+            border: none;
             box-shadow: 0 10px 30px rgba(0,0,0,0.5);
         }
         .download-hint { margin-top: 15px; color: #aaa; font-size: 0.9rem; }
@@ -78,7 +86,7 @@
     
     <div class="preview-container">
         <video id="video" autoplay playsinline></video>
-        <canvas id="preview-canvas" width="800" height="600"></canvas>
+        <canvas id="preview-canvas"></canvas>
         <div id="countdown-text">3</div>
         <div id="flash"></div>
     </div>
@@ -115,32 +123,51 @@
         });
 
         // 初始化鏡頭
-        navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 960 } })
-            .then(stream => { video.srcObject = stream; })
-            .catch(err => {
-                console.error(err);
-                alert("無法存取相機，請確認權限設定。");
-            });
+        navigator.mediaDevices.getUserMedia({ 
+            video: { 
+                width: { ideal: 1280 }, 
+                height: { ideal: 960 },
+                facingMode: "user" 
+            } 
+        })
+        .then(stream => { 
+            video.srcObject = stream;
+            // 當鏡頭數據載入後，根據實際比例調整畫布大小
+            video.onloadedmetadata = () => {
+                const videoW = video.videoWidth;
+                const videoH = video.videoHeight;
+                const ratio = videoW / videoH;
+                
+                // 以 800 為基準寬度，動態計算高度
+                previewCanvas.width = 800;
+                previewCanvas.height = 800 / ratio;
+                
+                drawPreview();
+            };
+        })
+        .catch(err => {
+            console.error(err);
+            alert("無法存取相機，請確認權限設定。");
+        });
 
         // 即時繪製預覽（包含鏡像與圖框）
         function drawPreview() {
             ctx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
             
+            // 畫底層鏡像人臉
             ctx.save();
-            ctx.scale(-1, 1); // 水平翻轉
+            ctx.scale(-1, 1);
             ctx.drawImage(video, -previewCanvas.width, 0, previewCanvas.width, previewCanvas.height);
             ctx.restore();
             
-            // 繪製當前步驟的圖框
+            // 畫上層當前圖框
             let frameIdx = Math.min(currentStep - 1, 3);
             if (frames[frameIdx] && frames[frameIdx].complete) {
                 ctx.drawImage(frames[frameIdx], 0, 0, previewCanvas.width, previewCanvas.height);
             }
             requestAnimationFrame(drawPreview);
         }
-        video.onloadedmetadata = () => drawPreview();
 
-        // 閃光燈動畫效果
         function triggerFlash() {
             flashEl.style.opacity = '1';
             setTimeout(() => {
@@ -150,14 +177,13 @@
             }, 50);
         }
 
-        // 自動拍攝排程
         startBtn.onclick = async () => {
             startBtn.disabled = true;
-            capturedImages.length = 0; // 清空舊圖
+            capturedImages.length = 0;
 
             for (let i = 1; i <= 4; i++) {
                 currentStep = i;
-                await runCountdown(3); // 倒數 3 秒
+                await runCountdown(3);
                 triggerFlash();
                 capturePhoto();
             }
@@ -170,50 +196,40 @@
                 let count = seconds;
                 countdownEl.style.display = 'block';
                 countdownEl.innerText = count;
-                
                 const timer = setInterval(() => {
                     count--;
-                    if (count > 0) {
-                        countdownEl.innerText = count;
-                    } else {
-                        clearInterval(timer);
-                        countdownEl.style.display = 'none';
-                        resolve();
-                    }
+                    if (count > 0) countdownEl.innerText = count;
+                    else { clearInterval(timer); countdownEl.style.display = 'none'; resolve(); }
                 }, 1000);
             });
         }
 
         function capturePhoto() {
             const tempCanvas = document.createElement('canvas');
-            tempCanvas.width = 800;
-            tempCanvas.height = 600;
+            // 存檔尺寸必須跟當時的預覽尺寸一致
+            tempCanvas.width = previewCanvas.width;
+            tempCanvas.height = previewCanvas.height;
             const tCtx = tempCanvas.getContext('2d');
-            // 將當前 previewCanvas 的快照存起來
             tCtx.drawImage(previewCanvas, 0, 0);
             capturedImages.push(tempCanvas);
         }
 
         function generateFinalStrip() {
             const fCtx = finalCanvas.getContext('2d');
-            const imgW = 800;
-            const imgH = 600;
+            const imgW = previewCanvas.width;
+            const imgH = previewCanvas.height;
 
-            // 無縫拼接：總寬度 800，總高度 600 * 4
+            // 無縫拼接：寬度與單張相同，高度為單張高度 * 4
             finalCanvas.width = imgW;
             finalCanvas.height = imgH * 4;
 
             capturedImages.forEach((img, index) => {
-                // 座標 (0, 0), (0, 600), (0, 1200), (0, 1800)
                 fCtx.drawImage(img, 0, index * imgH, imgW, imgH);
             });
 
-            // 顯示結果介面
             document.getElementById('result-container').style.display = 'block';
             document.getElementById('reset-btn').style.display = 'inline-block';
             startBtn.style.display = 'none';
-            
-            // 畫面自動捲動到底部看結果
             window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
         }
 
