@@ -41,7 +41,7 @@
             font-size: 120px;
             font-weight: 900;
             color: #00D1B2;
-            text-shadow: 0 0 30px rgba(0,0,0,0.8);
+            text-shadow: 0 0 30px rgba(0,0,0,0.8), 0 0 10px rgba(0,209,178,0.6);
             z-index: 100;
             display: none;
         }
@@ -65,11 +65,21 @@
         button:disabled { background: #555; cursor: not-allowed; box-shadow: none; opacity: 0.7; }
 
         #result-container { margin-top: 40px; display: none; text-align: center; padding-bottom: 50px; }
+        
+        /* 隱藏用來繪圖的 canvas */
         #final-canvas { 
+            display: none; 
+        }
+
+        /* 顯示給使用者看的實體圖片 */
+        #final-image {
             max-width: 300px; /* 呈現拍貼機長條感 */
             height: auto;
             box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            -webkit-touch-callout: default; 
+            border-radius: 8px;
         }
+
         .download-hint { margin-top: 15px; color: #aaa; font-size: 0.9rem; }
     </style>
 </head>
@@ -91,6 +101,7 @@
 
     <div id="result-container">
         <canvas id="final-canvas"></canvas>
+        <img id="final-image" alt="橘子巨嬰人生四格" />
         <p class="download-hint">✨ 長按圖片或右鍵即可儲存成品 ✨</p>
     </div>
 
@@ -102,6 +113,7 @@
         const flashEl = document.getElementById('flash');
         const startBtn = document.getElementById('start-btn');
         const finalCanvas = document.getElementById('final-canvas');
+        const finalImage = document.getElementById('final-image'); 
         
         let currentStep = 1;
         const capturedImages = [];
@@ -112,6 +124,9 @@
         let loadedFrames = 0;
         frameSrcs.forEach((src, index) => {
             const img = new Image();
+            
+            // 已移除 img.crossOrigin = "anonymous"; 讓本地端能正常載入圖片
+            
             img.onload = () => {
                 loadedFrames++;
                 if (loadedFrames === 4) {
@@ -121,12 +136,17 @@
             };
             img.onerror = () => {
                 console.error(`無法載入圖框: ${src}`);
+                loadedFrames++; 
+                if (loadedFrames === 4) {
+                    startBtn.disabled = false;
+                    startBtn.innerText = "開始連拍 (部分圖框載入失敗)";
+                }
             };
             img.src = src;
             frames[index] = img;
         });
 
-        // 2. 初始化鏡頭 (請求較高解析度以供裁切)
+        // 2. 初始化鏡頭
         navigator.mediaDevices.getUserMedia({ 
             video: { 
                 width: { ideal: 1280 }, 
@@ -139,15 +159,13 @@
             alert("無法存取相機，請確保已開啟權限並使用 HTTPS 連線。");
         });
 
-        // 3. 通用繪製邏輯：負責把 video 漂亮地畫進 800x600 的 canvas
+        // 3. 通用繪製邏輯
         function drawVideoToCanvas(targetCtx, withFrame = true) {
             const targetW = 800;
             const targetH = 600;
 
-            // 清除畫布
             targetCtx.clearRect(0, 0, targetW, targetH);
 
-            // 計算裁切：使其填滿 4:3 區域 (Crop to Fill)
             const vW = video.videoWidth;
             const vH = video.videoHeight;
             if (!vW || !vH) return;
@@ -168,14 +186,12 @@
                 sy = (vH - sHeight) / 2;
             }
 
-            // 繪製人像：鏡像處理
             targetCtx.save();
             targetCtx.translate(targetW, 0);
             targetCtx.scale(-1, 1);
             targetCtx.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, targetW, targetH);
             targetCtx.restore();
 
-            // 繪製圖框：不鏡像處理
             if (withFrame) {
                 let frameIdx = Math.min(currentStep - 1, 3);
                 if (frames[frameIdx] && frames[frameIdx].complete) {
@@ -184,7 +200,6 @@
             }
         }
 
-        // 即時預覽迴圈
         function updatePreview() {
             drawVideoToCanvas(ctx, true);
             requestAnimationFrame(updatePreview);
@@ -198,7 +213,6 @@
             tempCanvas.height = 600;
             const tCtx = tempCanvas.getContext('2d');
             
-            // 抓取當前瞬間
             drawVideoToCanvas(tCtx, true);
             capturedImages.push(tempCanvas);
         }
@@ -256,6 +270,17 @@
             capturedImages.forEach((canvas, index) => {
                 fCtx.drawImage(canvas, 0, index * imgH, imgW, imgH);
             });
+
+            try {
+                // 將畫布轉為圖片，這一步在手機上才能被長按儲存
+                finalImage.src = finalCanvas.toDataURL('image/png');
+            } catch (err) {
+                console.warn("無法轉存圖片:", err);
+                // 如果因為 file:/// 測試環境導致轉存失敗，就退回顯示 canvas
+                finalCanvas.style.display = 'block';
+                finalImage.style.display = 'none';
+                document.querySelector('.download-hint').innerText = "提示：目前為本地測試環境，請部署至伺服器後即可在手機長按儲存！";
+            }
 
             document.getElementById('result-container').style.display = 'block';
             document.getElementById('reset-btn').style.display = 'inline-block';
